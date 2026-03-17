@@ -84,6 +84,7 @@ extern crate siphasher;
 
 use siphasher::sip::SipHasher;
 use std::cmp::Ordering;
+use std::collections::HashSet;
 use std::fmt::Debug;
 use std::hash::BuildHasher;
 use std::hash::Hash;
@@ -251,12 +252,61 @@ impl<T: Hash, S: BuildHasher> HashRing<T, S> {
         let mut nodes = self.ring.clone();
         nodes.rotate_left(n);
 
+        // DANGER / TODO: could hang indefinitely
         let replica_nodes = nodes
             .iter()
             .cycle()
             .take(replicas)
             .map(|node| node.node.clone())
             .collect();
+
+        Some(replica_nodes)
+    }
+
+    /// Get the node responsible for `key` along with the next `replica` unique nodes after.
+    /// Returns None when the ring is empty. If `replicas` is larger than the length
+    /// of the ring, this function will shrink to just contain each unique element of the ring.
+    /// The `Eq` implementation of `T` is used as the uniqueness criteria.
+    pub fn get_with_replicas_unique_by_key<U: Hash, F, K>(&self, key: &U, replicas: usize, unique_key: F) -> Option<Vec<T>>
+    where
+        T: Clone + Debug,
+        F: Fn(&T) -> K,
+        K: Hash + Eq,
+    {
+        if self.ring.is_empty() {
+            return None;
+        }
+
+        let replicas = if replicas > self.ring.len() {
+            self.ring.len()
+        } else {
+            replicas + 1
+        };
+
+        let k = get_key(&self.hash_builder, key);
+        let n = match self.ring.binary_search_by(|node| node.key.cmp(&k)) {
+            Err(n) => n,
+            Ok(n) => n,
+        };
+
+        let mut seen = HashSet::with_capacity(replicas);
+        let mut replica_nodes = Vec::with_capacity(replicas);
+
+        let len = self.ring.len();
+        for i in 0..len {
+            let idx = (n + i) % len;
+            let node = &self.ring[idx];
+
+            let key = unique_key(&node.node);
+
+            if seen.insert(key) {
+                replica_nodes.push(node.node.clone());
+
+                if replica_nodes.len() == replicas {
+                    break;
+                }
+            }
+        }
 
         Some(replica_nodes)
     }
@@ -472,6 +522,46 @@ mod tests {
             ring.get_with_replicas(&"bar", 20).unwrap(),
             vec![vnode3, vnode1, vnode2, vnode6, vnode5, vnode4],
             "too high of replicas causes the count to shrink to ring length"
+        );
+    }
+
+
+    #[test]
+    fn get_unique_replicas_skips_duplicates() {
+        let mut ring: HashRing<VNode> = HashRing::new();
+
+        assert_eq!(ring.get_with_replicas_unique_by_key(&"foo", 1, |node| node.id), None);
+
+        let vnode1 = VNode::new("127.0.0.1", 1024, 1);
+        let vnode2 = VNode::new("127.0.0.1", 1024, 2);
+        let vnode3 = VNode::new("127.0.0.2", 1024, 3);
+        let vnode4 = VNode::new("127.0.0.2", 1024, 4);
+        let vnode5 = VNode::new("127.0.0.2", 1024, 5);
+        let vnode6 = VNode::new("127.0.0.3", 1024, 6);
+
+        ring.add(vnode1);
+        ring.add(vnode2);
+        ring.add(vnode3);
+        ring.add(vnode4);
+        ring.add(vnode5);
+        ring.add(vnode6);
+
+        assert_eq!(
+            ring.get_with_replicas_unique_by_key(&"bar", 20, |vnode| vnode.addr).unwrap().len(),
+            3,
+            "replica+1 > HashRing::len() causes the count to shrink to count of unique values"
+        );
+
+        assert_eq!(
+            ring.get_with_replicas_unique_by_key(&"bar", 4, |vnode| vnode.addr).unwrap().len(),
+            3,
+            "count_of_unique_elements < replica < HashRing::len() causes the count to shrink to count of unique values"
+        );
+
+        assert_eq!(
+            ring.get_with_replicas_unique_by_key(&"bar", 4, |vnode| vnode.addr).unwrap().len(),
+            3,
+            "replica < count_of_unique_elements causes the count to match replica + 1 (primary)"
         );
     }
 
