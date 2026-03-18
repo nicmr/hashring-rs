@@ -237,11 +237,7 @@ impl<T: Hash, S: BuildHasher> HashRing<T, S> {
             return None;
         }
 
-        let replicas = if replicas > self.ring.len() {
-            self.ring.len()
-        } else {
-            replicas + 1
-        };
+        let replicas = std::cmp::min(replicas+1, self.ring.len());
 
         let k = get_key(&self.hash_builder, key);
         let n = match self.ring.binary_search_by(|node| node.key.cmp(&k)) {
@@ -252,13 +248,19 @@ impl<T: Hash, S: BuildHasher> HashRing<T, S> {
         let mut nodes = self.ring.clone();
         nodes.rotate_left(n);
 
-        // DANGER / TODO: could hang indefinitely
-        let replica_nodes = nodes
-            .iter()
-            .cycle()
-            .take(replicas)
-            .map(|node| node.node.clone())
-            .collect();
+        let mut replica_nodes = Vec::with_capacity(replicas);
+        let len = self.ring.len();
+
+        for i in 0..len {
+            let idx = (n + i) % len;
+            let node = &self.ring[idx];
+
+            replica_nodes.push(node.node.clone());
+
+            if replica_nodes.len() == replicas {
+                break;
+            }
+        }
 
         Some(replica_nodes)
     }
@@ -277,12 +279,7 @@ impl<T: Hash, S: BuildHasher> HashRing<T, S> {
             return None;
         }
 
-        let replicas = if replicas > self.ring.len() {
-            self.ring.len()
-        } else {
-            replicas + 1
-        };
-
+        let replicas = std::cmp::min(replicas + 1, self.ring.len());
         let k = get_key(&self.hash_builder, key);
         let n = match self.ring.binary_search_by(|node| node.key.cmp(&k)) {
             Err(n) => n,
@@ -495,6 +492,12 @@ mod tests {
             ring.get_with_replicas(&"foo", 4).unwrap(),
             vec![vnode5, vnode4, vnode3, vnode1, vnode2]
         );
+
+        assert_eq!(
+            ring.get_with_replicas(&"foo", 5).unwrap().len(),
+            6,
+            "return entire ring when primary + replicas == ring.len()"
+        );
     }
 
     #[test]
@@ -530,7 +533,7 @@ mod tests {
     fn get_unique_replicas_skips_duplicates() {
         let mut ring: HashRing<VNode> = HashRing::new();
 
-        assert_eq!(ring.get_with_replicas_unique_by_key(&"foo", 1, |node| node.id), None);
+        assert_eq!(ring.get_with_replicas_unique_by_key(&"foo", 1, |node| node.addr), None);
 
         let vnode1 = VNode::new("127.0.0.1", 1024, 1);
         let vnode2 = VNode::new("127.0.0.1", 1024, 2);
@@ -549,13 +552,13 @@ mod tests {
         assert_eq!(
             ring.get_with_replicas_unique_by_key(&"bar", 20, |vnode| vnode.addr).unwrap().len(),
             3,
-            "replica+1 > HashRing::len() causes the count to shrink to count of unique values"
+            "replicas+1 > HashRing::len() causes the count to shrink to count of unique values"
         );
 
         assert_eq!(
             ring.get_with_replicas_unique_by_key(&"bar", 4, |vnode| vnode.addr).unwrap().len(),
             3,
-            "count_of_unique_elements < replica < HashRing::len() causes the count to shrink to count of unique values"
+            "count_of_unique_elements < replicas+1 < HashRing::len() causes the count to shrink to count of unique values"
         );
 
         assert_eq!(
