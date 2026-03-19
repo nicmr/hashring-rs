@@ -245,9 +245,6 @@ impl<T: Hash, S: BuildHasher> HashRing<T, S> {
             Ok(n) => n,
         };
 
-        let mut nodes = self.ring.clone();
-        nodes.rotate_left(n);
-
         let mut replica_nodes = Vec::with_capacity(replicas);
         let len = self.ring.len();
 
