@@ -562,9 +562,9 @@ mod tests {
         );
 
         assert_eq!(
-            ring.get_with_replicas_unique_by_key(&"bar", 4, |vnode| vnode.addr).unwrap().len(),
-            3,
-            "replica < count_of_unique_elements causes the count to match replica + 1 (primary)"
+            ring.get_with_replicas_unique_by_key(&"bar", 1, |vnode| vnode.addr).unwrap().len(),
+            2,
+            "replicas < count_of_unique_elements causes the count to match replicas + 1 (including primary)"
         );
     }
 
