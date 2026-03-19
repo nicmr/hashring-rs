@@ -265,10 +265,14 @@ impl<T: Hash, S: BuildHasher> HashRing<T, S> {
         Some(replica_nodes)
     }
 
-    /// Get the node responsible for `key` along with the next `replica` unique nodes after.
-    /// Returns None when the ring is empty. If `replicas` is larger than the length
-    /// of the ring, this function will shrink to just contain each unique element of the ring.
-    /// The `Eq` implementation of `T` is used as the uniqueness criteria.
+    /// Get the node responsible for `key` (the primary) along with up to `replicas`
+    /// additional unique nodes after it, where uniqueness is determined by the
+    /// values produced by the `unique_key` closure.
+    /// Returns `None` when the ring is empty. If `replicas` is larger than the length
+    /// of the ring, this function will shrink to just contain each unique element of
+    /// the ring, up to `replicas + 1` nodes (primary plus replicas). If there are fewer
+    /// distinct `unique_key` values than requested, the returned vector will contain
+    /// fewer than `replicas + 1` nodes.
     pub fn get_with_replicas_unique_by_key<U: Hash, F, K>(&self, key: &U, replicas: usize, unique_key: F) -> Option<Vec<T>>
     where
         T: Clone + Debug,
