@@ -295,9 +295,9 @@ impl<T: Hash, S: BuildHasher> HashRing<T, S> {
             let idx = (n + i) % len;
             let node = &self.ring[idx];
 
-            let key = unique_key(&node.node);
+            let unique = unique_key(&node.node);
 
-            if seen.insert(key) {
+            if seen.insert(unique) {
                 replica_nodes.push(node.node.clone());
 
                 if replica_nodes.len() == replicas {
